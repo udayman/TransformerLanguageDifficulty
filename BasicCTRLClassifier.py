@@ -12,7 +12,7 @@ import numpy as np
 from sklearn.metrics import mean_squared_error, mean_absolute_error, root_mean_squared_error
 
 from transformers import AdamW, get_linear_schedule_with_warmup
-from utils import evaluate_list_quantile, evaluate_single_quantile, produce_quantiles
+from utils import evaluate_list_quantile, evaluate_single_quantile, produce_quantiles, get_value_quantile_train
 from torch.utils.data.dataloader import DataLoader
 
 import warnings
@@ -69,7 +69,7 @@ model = AutoModelForCausalLM.from_pretrained(model_path)
 model.to("cuda")
 
 #load classifier
-classifier_path = "classifier_50t"
+classifier_path = "classifier_20t"
 classifier = AutoModelForSequenceClassification.from_pretrained(classifier_path)
 classifier.to("cuda")
 classifier_tokenizer = AutoTokenizer.from_pretrained(classifier_path)
@@ -92,10 +92,11 @@ for item in ptraining_data:
         cur_element_source = " ".join(item_source_split[i:i+30])
         training_data.append({"source": cur_element_source, "target": item_target})
     '''
-    training_data.append({"source": item_source, "target": item_target})
+    
+    training_data.append({"source": " ".join(item_source_split[:20]), "target": item_target})
 
 quantiles = produce_quantiles() 
-training_data = ["<" + str(evaluate_single_quantile(quantiles, data["target"])) + "> " + data["source"] for data in training_data]
+training_data = ["<" + str(evaluate_single_quantile(quantiles, data["target"])) + ">" + data["source"] for data in training_data]
 
 for item in ptest_data:
     item_source = item["source"]
@@ -104,8 +105,9 @@ for item in ptest_data:
     item_source_split = item_source.split()
     cur_element_source = " ".join(item_source_split[:10])
 
-    cur_element_source = "<" + str(evaluate_single_quantile(quantiles, item_target)) + "> " + cur_element_source
-    test_data.append({"source": cur_element_source, "target": evaluate_single_quantile(quantiles, item_target)})
+    cur_element_source = cur_element_source
+    cur_element_source = "<" + str(evaluate_single_quantile(quantiles, item_target)) + ">" + cur_element_source
+    test_data.append({"source": cur_element_source, "target": get_value_quantile_train(quantiles, evaluate_single_quantile(quantiles, item_target))})
 
 for item in ptraining_data:
     item_source = item["source"]
@@ -114,8 +116,8 @@ for item in ptraining_data:
     item_source_split = item_source.split()
     cur_element_source = " ".join(item_source_split[:10])
 
-    cur_element_source = "<" + str(evaluate_single_quantile(quantiles, item_target)) + "> " + cur_element_source
-    training_eval.append({"source": cur_element_source, "target": evaluate_single_quantile(quantiles, item_target)})
+    cur_element_source = "<" + str(evaluate_single_quantile(quantiles, item_target)) + ">" + cur_element_source
+    training_eval.append({"source": cur_element_source, "target": get_value_quantile_train(quantiles, evaluate_single_quantile(quantiles, item_target))})
 
 train_dataset = CausalDataset(training_data, tokenizer)
 test_dataset = EvaluationDataset(test_data, tokenizer)
@@ -123,11 +125,12 @@ training_evalset = EvaluationDataset(training_eval, tokenizer)
 
 #collating model for language modeling
 data_collator_eval = DataCollatorWithPadding(tokenizer=tokenizer)
+tokenizer.padding_side = 'left'
 tokenizer.pad_token = tokenizer.eos_token
 data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
 num_epochs = 5
-optimizer = AdamW(model.parameters(), correct_bias='True', lr=5e-5)
+optimizer = AdamW(model.parameters(), correct_bias='True', lr=5e-4)
 lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=len(train_dataset) * num_epochs)
 
 batch_size = 64
@@ -135,7 +138,7 @@ train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=batch_size
 eval_dataloader = DataLoader(test_dataset, shuffle=False, batch_size=batch_size, collate_fn=data_collator_eval)
 train_eval_dataloader = DataLoader(training_evalset, shuffle=False, batch_size=batch_size, collate_fn=data_collator_eval)
 
-num_training_steps = int(len(train_dataset)//batch_size * num_epochs)
+num_training_steps = int(len(train_dataloader) * num_epochs)
 
 directory = "basic_classifier_CTRLfinetune"
 if not os.path.exists(directory):
@@ -145,6 +148,35 @@ if not os.path.exists(directory):
 best_val_loss = float("inf")
 progress_bar = tqdm(range(num_training_steps))
 num_generated_tokens = 10
+
+model.eval()
+test_mse = 0
+test_rmse = 0
+test_mae = 0
+for batch_i, batch in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader)):
+    with torch.no_grad():
+        batch_inputs = {'input_ids': batch['input_ids'].to("cuda"), 'attention_mask': batch['attention_mask'].to("cuda")}
+        
+        model_outputs = model.generate(**batch_inputs, max_new_tokens=num_generated_tokens, pad_token_id = tokenizer.eos_token_id)
+        output_strings = tokenizer.batch_decode(model_outputs)
+        
+        inputs = classifier_tokenizer(output_strings, return_tensors="pt", padding=True)
+        inputs.to("cuda")
+        classifier_outputs = classifier(**inputs).logits
+        classifier_outputs = classifier_outputs.cpu().flatten()
+        labels = batch['labels']
+        
+        test_mse += mean_squared_error(labels, classifier_outputs)
+        test_rmse += root_mean_squared_error(labels, classifier_outputs)
+        test_mae += mean_absolute_error(labels, classifier_outputs)
+
+test_mse = test_mse / len(eval_dataloader)
+test_rmse = test_rmse / len(eval_dataloader)
+test_mae = test_mae / len(eval_dataloader)
+print(f"Validation mse: {test_mse}")
+print(f"Validation rmse: {test_rmse}")
+print(f"Validation mae: {test_mae}")
+
 for epoch in range(num_epochs):
     # training
     model.train()
@@ -167,28 +199,14 @@ for epoch in range(num_epochs):
     for batch_i, batch in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader)):
         with torch.no_grad():
             batch_inputs = {'input_ids': batch['input_ids'].to("cuda"), 'attention_mask': batch['attention_mask'].to("cuda")}
-            output_strings = test_data[batch_size*batch_i:batch_size*batch_i+batch_size]
-            len_output_strings = len(output_strings)
-            output_strings = [output_strings[i]['source'] for i in range(len_output_strings)]
-
-            attention_added = torch.ones(len_output_strings, device="cuda")
-            attention_added = torch.unsqueeze(attention_added, 1)
             
-            for i in range(num_generated_tokens):
-                output = model(**batch_inputs)
-
-                best_next_encodings = output.logits[:,-1,:].argmax(dim=-1)
-                
-                batch_inputs['input_ids'] = torch.cat((batch_inputs['input_ids'], torch.unsqueeze(best_next_encodings, 1)), dim=1)
-                batch_inputs['attention_mask'] = torch.cat((batch_inputs['attention_mask'], attention_added), dim=1)
-
-                best_next_words = tokenizer.batch_decode(best_next_encodings)
-                output_strings = [output_strings[i] + best_next_words[i] for i in range(len_output_strings)]
+            model_outputs = model.generate(**batch_inputs, max_new_tokens=num_generated_tokens, pad_token_id = tokenizer.eos_token_id)
+            output_strings = tokenizer.batch_decode(model_outputs)
             
             inputs = classifier_tokenizer(output_strings, return_tensors="pt", padding=True)
             inputs.to("cuda")
             classifier_outputs = classifier(**inputs).logits
-            classifier_outputs = torch.Tensor(evaluate_list_quantile(quantiles, classifier_outputs.flatten()))
+            classifier_outputs = classifier_outputs.cpu().flatten()
             labels = batch['labels']
             
             test_mse += mean_squared_error(labels, classifier_outputs)
@@ -207,41 +225,29 @@ for epoch in range(num_epochs):
         tokenizer.save_pretrained(directory)
         best_val_loss = test_mse
 
-
+    test_mse = 0
+    test_rmse = 0
+    test_mae = 0
     for batch_i, batch in tqdm(enumerate(train_eval_dataloader), total=len(train_eval_dataloader)):
         with torch.no_grad():
             batch_inputs = {'input_ids': batch['input_ids'].to("cuda"), 'attention_mask': batch['attention_mask'].to("cuda")}
-            output_strings = training_eval[batch_size*batch_i:batch_size*batch_i+batch_size]
-            len_output_strings = len(output_strings)
-            output_strings = [output_strings[i]['source'] for i in range(len_output_strings)]
-
-            attention_added = torch.ones(len_output_strings, device="cuda")
-            attention_added = torch.unsqueeze(attention_added, 1)
             
-            for i in range(num_generated_tokens):
-                output = model(**batch_inputs)
-
-                best_next_encodings = output.logits[:,-1,:].argmax(dim=-1)
-                
-                batch_inputs['input_ids'] = torch.cat((batch_inputs['input_ids'], torch.unsqueeze(best_next_encodings, 1)), dim=1)
-                batch_inputs['attention_mask'] = torch.cat((batch_inputs['attention_mask'], attention_added), dim=1)
-
-                best_next_words = tokenizer.batch_decode(best_next_encodings)
-                output_strings = [output_strings[i] + best_next_words[i] for i in range(len_output_strings)]
+            model_outputs = model.generate(**batch_inputs, max_new_tokens=num_generated_tokens, pad_token_id = tokenizer.eos_token_id)
+            output_strings = tokenizer.batch_decode(model_outputs)
             
             inputs = classifier_tokenizer(output_strings, return_tensors="pt", padding=True)
             inputs.to("cuda")
             classifier_outputs = classifier(**inputs).logits
-            classifier_outputs = torch.Tensor(evaluate_list_quantile(quantiles, classifier_outputs.flatten()))
+            classifier_outputs = classifier_outputs.cpu().flatten()
             labels = batch['labels']
-
+            
             test_mse += mean_squared_error(labels, classifier_outputs)
-            test_rmse += mean_squared_error(labels, classifier_outputs, squared=False)
+            test_rmse += root_mean_squared_error(labels, classifier_outputs)
             test_mae += mean_absolute_error(labels, classifier_outputs)
 
-    test_mse = test_mse / len(eval_dataloader)
-    test_rmse = test_rmse / len(eval_dataloader)
-    test_mae = test_mae / len(eval_dataloader)
+    test_mse = test_mse / len(train_eval_dataloader)
+    test_rmse = test_rmse / len(train_eval_dataloader)
+    test_mae = test_mae / len(train_eval_dataloader)
     print(f"Training mse: {test_mse}")
     print(f"Training rmse: {test_rmse}")
     print(f"Training mae: {test_mae}")

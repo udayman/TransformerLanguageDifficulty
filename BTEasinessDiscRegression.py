@@ -85,7 +85,7 @@ for item in ptraining_data:
     '''
     
     
-    training_data.append({"source": item_source, "target": item_target})
+    training_data.append({"source": " ".join(item_source_split[:20]), "target": item_target})
 
 for item in ptest_data:
     item_source = item["source"]
@@ -100,7 +100,7 @@ for item in ptest_data:
     '''
     
     
-    test_data.append({"source": item_source, "target": item_target})
+    test_data.append({"source": " ".join(item_source_split[:20]), "target": item_target})
 
 train_dataset = ClassificationDataset(training_data, tokenizer)
 test_dataset = ClassificationDataset(test_data, tokenizer)
@@ -138,6 +138,35 @@ directory = "classifier_50t"
 if not os.path.exists(directory):
     # Create the directory
     os.makedirs(directory)
+
+model.eval()
+
+test_mse = 0
+test_rmse = 0
+test_mae = 0
+test_loss = 0
+for batch_i, batch in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader)):
+    with torch.no_grad():
+        batch.to("cuda")
+
+        output = model(**batch)
+        classifier_outputs = output.logits.cpu()
+        labels = batch['labels'].cpu()
+
+        test_mse += mean_squared_error(labels, classifier_outputs)
+        test_rmse += root_mean_squared_error(labels, classifier_outputs)
+        test_mae += mean_absolute_error(labels, classifier_outputs)
+        test_loss += output.loss
+
+
+test_mse = test_mse / len(eval_dataloader)
+test_rmse = test_rmse / len(eval_dataloader)
+test_mae = test_mae / len(eval_dataloader)
+test_loss = test_loss / len(eval_dataloader)
+print(f"Validation mse: {test_mse}")
+print(f"Validation rmse: {test_rmse}")
+print(f"Validation mae: {test_mae}")
+print(f"Validation loss: {test_loss}")
 
 best_val_loss = float("inf")
 progress_bar = tqdm(range(num_training_steps))
