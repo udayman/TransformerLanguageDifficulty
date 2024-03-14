@@ -158,7 +158,9 @@ for batch_i, batch in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader
         batch_inputs = {'input_ids': batch['input_ids'].to("cuda"), 'attention_mask': batch['attention_mask'].to("cuda")}
         
         model_outputs = model.generate(**batch_inputs, max_new_tokens=num_generated_tokens, pad_token_id = tokenizer.eos_token_id)
-        output_strings = tokenizer.batch_decode(model_outputs)
+        output_strings = tokenizer.batch_decode(model_outputs, skip_special_tokens=True)
+        output_strings = [string[3:] for string in output_strings]
+
         
         inputs = classifier_tokenizer(output_strings, return_tensors="pt", padding=True)
         inputs.to("cuda")
@@ -201,7 +203,9 @@ for epoch in range(num_epochs):
             batch_inputs = {'input_ids': batch['input_ids'].to("cuda"), 'attention_mask': batch['attention_mask'].to("cuda")}
             
             model_outputs = model.generate(**batch_inputs, max_new_tokens=num_generated_tokens, pad_token_id = tokenizer.eos_token_id)
-            output_strings = tokenizer.batch_decode(model_outputs)
+            output_strings = tokenizer.batch_decode(model_outputs, skip_special_tokens=True)
+            output_strings = [string[3:] for string in output_strings]
+
             
             inputs = classifier_tokenizer(output_strings, return_tensors="pt", padding=True)
             inputs.to("cuda")
@@ -233,7 +237,8 @@ for epoch in range(num_epochs):
             batch_inputs = {'input_ids': batch['input_ids'].to("cuda"), 'attention_mask': batch['attention_mask'].to("cuda")}
             
             model_outputs = model.generate(**batch_inputs, max_new_tokens=num_generated_tokens, pad_token_id = tokenizer.eos_token_id)
-            output_strings = tokenizer.batch_decode(model_outputs)
+            output_strings = tokenizer.batch_decode(model_outputs, skip_special_tokens=True)
+            output_strings = [string[3:] for string in output_strings]
             
             inputs = classifier_tokenizer(output_strings, return_tensors="pt", padding=True)
             inputs.to("cuda")
