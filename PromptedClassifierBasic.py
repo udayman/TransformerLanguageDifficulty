@@ -12,7 +12,7 @@ import numpy as np
 from sklearn.metrics import mean_squared_error, mean_absolute_error, root_mean_squared_error, precision_score, recall_score, f1_score, accuracy_score
 
 from transformers import AdamW, get_linear_schedule_with_warmup
-from utils import evaluate_list_quantile_eval, evaluate_single_quantile, produce_quantiles, get_value_quantile_train
+from utils import evaluate_list_quantile_eval, evaluate_single_quantile, produce_quantiles, get_value_quantile_train, return_difficulty
 from torch.utils.data.dataloader import DataLoader
 
 import warnings
@@ -45,6 +45,7 @@ class EvaluationDataset(Dataset):
     def __getitem__(self, i):
         inputs = self.tokenizer(self.data[i]['source'], truncation=True, max_length=60)
         inputs['labels'] = self.data[i]['target']
+        inputs['prefix_length'] = self.data[i]['prefix_length']
         return inputs
 
 #data method to return training and test data
@@ -59,8 +60,8 @@ def return_data(path):
 	  test_data = [{"source": row[14], "target": float(row[22])} for row in reader if row[-1] == "Test"]
 	return training_data, test_data
 
-
-def run_main(data_augmentation = False, classifier_path = "classifier_50t", output_path = "basic_classifier_CTRLfinetune"):
+#CSV path
+def run_main(data_augmentation = False, classifier_path = "classifier_50t", output_path = "prompt_classifier_CTRLfinetune"):
     path = "CLEAR Corpus 6.01 - CLEAR Corpus 6.01.csv"
 
     #Using DistilGPT2 - defining tokenizer and model
@@ -86,15 +87,11 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
         item_source = item["source"]
         item_target = item["target"]
         item_source_split = item_source.split()
+        num_source_item = len(item_source_split)
 
-        '''
-        for i in range(0, num_source_item - 30, 30):
-            cur_element_source = " ".join(item_source_split[i:i+30])
-            training_data.append({"source": cur_element_source, "target": item_target})
-        '''
         if (evaluate_single_quantile(quantiles, item_target)) == 2:
-            continue
-        
+                continue
+            
         if data_augmentation == False:
             training_data.append({"source": " ".join(item_source_split[:50]), "target": item_target})
         else:
@@ -103,33 +100,35 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
                 cur_element_source = " ".join(item_source_split[i:i+50])
                 training_data.append({"source": cur_element_source, "target": item_target})
  
-    training_data = ["<" + str(evaluate_single_quantile(quantiles, data["target"])) + ">" + data["source"] for data in training_data]
+    training_data = ["This is written by a  " + return_difficulty(evaluate_single_quantile(quantiles, data["target"])) + ": " + data["source"] for data in training_data]
 
     for item in ptest_data:
         item_source = item["source"]
         item_target = item["target"]
 
-        if (evaluate_single_quantile(quantiles, item_target)) == 2:
-            continue
-
         item_source_split = item_source.split()
         cur_element_source = " ".join(item_source_split[:1])
 
-        cur_element_source = cur_element_source
-        cur_element_source = "<" + str(evaluate_single_quantile(quantiles, item_target)) + ">" + cur_element_source
-        test_data.append({"source": cur_element_source, "target": get_value_quantile_train(quantiles, evaluate_single_quantile(quantiles, item_target))})
+        if (evaluate_single_quantile(quantiles, item_target)) == 2:
+            continue
+
+        prefix = "This is written by a  " + return_difficulty(evaluate_single_quantile(quantiles, item_target)) + ": "
+        cur_element_source = prefix + cur_element_source
+        test_data.append({"source": cur_element_source, "target": get_value_quantile_train(quantiles, evaluate_single_quantile(quantiles, item_target)), "prefix_length":len(prefix)})
 
     for item in ptraining_data:
         item_source = item["source"]
         item_target = item["target"]
-        if (evaluate_single_quantile(quantiles, item_target)) == 2:
-            continue
 
         item_source_split = item_source.split()
         cur_element_source = " ".join(item_source_split[:1])
 
-        cur_element_source = "<" + str(evaluate_single_quantile(quantiles, item_target)) + ">" + cur_element_source
-        training_eval.append({"source": cur_element_source, "target": get_value_quantile_train(quantiles, evaluate_single_quantile(quantiles, item_target))})
+        if (evaluate_single_quantile(quantiles, item_target)) == 2:
+            continue
+
+        prefix = "This is written by a  " + return_difficulty(evaluate_single_quantile(quantiles, item_target)) + ": "
+        cur_element_source = prefix + cur_element_source
+        training_eval.append({"source": cur_element_source, "target": get_value_quantile_train(quantiles, evaluate_single_quantile(quantiles, item_target)), "prefix_length":len(prefix)})
 
     train_dataset = CausalDataset(training_data, tokenizer)
     test_dataset = EvaluationDataset(test_data, tokenizer)
@@ -141,7 +140,7 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
     tokenizer.pad_token = tokenizer.eos_token
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
-    num_epochs = 10
+    num_epochs = 20
     optimizer = AdamW(model.parameters(), correct_bias='True', lr=5e-4)
     lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=len(train_dataset) * num_epochs)
 
@@ -152,7 +151,7 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
 
     num_training_steps = int(len(train_dataloader) * num_epochs)
 
-    directory = output_path
+    directory = classifier_path
     if not os.path.exists(directory):
         # Create the directory
         os.makedirs(directory)
@@ -174,7 +173,7 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
             
             model_outputs = model.generate(**batch_inputs, max_new_tokens=num_generated_tokens, pad_token_id = tokenizer.eos_token_id)
             output_strings = tokenizer.batch_decode(model_outputs, skip_special_tokens=True)
-            output_strings = [string[3:] for string in output_strings]
+            output_strings = [output_strings[i][batch['prefix_length'][i]:] for i in range(len(output_strings))]
             
             inputs = classifier_tokenizer(output_strings, return_tensors="pt", padding=True)
             inputs.to("cuda")
@@ -233,7 +232,7 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
                 
                 model_outputs = model.generate(**batch_inputs, max_new_tokens=num_generated_tokens, pad_token_id = tokenizer.eos_token_id)
                 output_strings = tokenizer.batch_decode(model_outputs, skip_special_tokens=True)
-                output_strings = [string[3:] for string in output_strings]
+                output_strings = [output_strings[i][batch['prefix_length'][i]:] for i in range(len(output_strings))]
 
                 
                 inputs = classifier_tokenizer(output_strings, return_tensors="pt", padding=True)
@@ -265,6 +264,7 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
         print(f"Validation recall: {test_recall}")
         print(f"Validation f1: {test_f1}")
 
+
         if test_accuracy < best_val_loss:
             model.save_pretrained(directory)
             tokenizer.save_pretrained(directory)
@@ -282,7 +282,7 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
                 
                 model_outputs = model.generate(**batch_inputs, max_new_tokens=num_generated_tokens, pad_token_id = tokenizer.eos_token_id)
                 output_strings = tokenizer.batch_decode(model_outputs, skip_special_tokens=True)
-                output_strings = [string[3:] for string in output_strings]
+                output_strings = [output_strings[i][batch['prefix_length'][i]:] for i in range(len(output_strings))]
                 
                 inputs = classifier_tokenizer(output_strings, return_tensors="pt", padding=True)
                 inputs.to("cuda")
@@ -293,6 +293,9 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
                 test_mse += mean_squared_error(labels, classifier_outputs)
                 test_rmse += root_mean_squared_error(labels, classifier_outputs)
                 test_mae += mean_absolute_error(labels, classifier_outputs)
+
+                target_classes = evaluate_list_quantile_eval(quantiles, labels)
+                classifier_classes = evaluate_list_quantile_eval(quantiles, classifier_outputs)
                 test_accuracy += accuracy_score(target_classes, classifier_classes, normalize = True)
                 test_recall += recall_score(target_classes, classifier_classes, average="macro")
                 test_f1 += f1_score(target_classes, classifier_classes, average="macro")
@@ -310,5 +313,35 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
         print(f"Training recall: {test_recall}")
         print(f"Training f1: {test_f1}")
 
+    #Replacing hugging face trainer with torch version
+
+    '''
+    training_args = TrainingArguments(
+       output_dir="final_classifier",
+       learning_rate=2e-5,
+       per_device_train_batch_size=3,
+       per_device_eval_batch_size=3,
+       num_train_epochs = num_epochs,
+       weight_decay=0.01,
+       evaluation_strategy="epoch",
+       save_strategy="epoch",
+       load_best_model_at_end=True,
+    )
+
+    trainer = Trainer(
+
+       model=model,
+       args=training_args,
+       train_dataset=train_dataset,
+       eval_dataset=test_dataset,
+       tokenizer=tokenizer,
+       data_collator=data_collator,
+       compute_metrics=compute_metrics,
+       optimizers = (optimizer, lr_scheduler)
+    )
+
+    trainer.train()
+    '''
+
 if __name__ == "__main__":
-    run_main(data_augmentation = False, classifier_path = "classifier_50t", output_path = "basic_classifier_CTRLfinetune")
+    run_main(data_augmentation = False, classifier_path = "classifier_50t", output_path = "prompt_classifier_CTRLfinetune")

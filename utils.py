@@ -31,6 +31,15 @@ def evaluate_list_quantile(quantiles, list):
       ans.append(1)
   return ans
 
+def evaluate_list_quantile_eval(quantiles, list):
+  ans = []
+  for val in list:
+    if val < (quantiles[0] + quantiles[1])/2:
+      ans.append(3)
+    else:
+      ans.append(1)
+  return ans
+
 def evaluate_single_quantile(quantiles, val):
   if val < quantiles[0]:
     return 3
@@ -54,6 +63,14 @@ def get_value_quantile_evaluate(quantiles, val):
     return (quantiles[0] + quantiles[1])/2
   elif (val == 3):
     return (quantiles[-2] + quantiles[0])/2
+
+def return_difficulty(val):
+  if (val == 1):
+    return "1st grader"
+  elif (val == 2):
+    return "6th grader"
+  else:
+    return "PhD student"
 
 def produce_quantiles():
   with open("CLEAR Corpus 6.01 - CLEAR Corpus 6.01.csv", newline="", encoding="utf8") as f:
