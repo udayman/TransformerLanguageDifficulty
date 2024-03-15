@@ -60,7 +60,7 @@ def return_data(path):
 	return training_data, test_data
 
 
-def run_main(data_augmentation = False, classifier_path = "classifier_50t", output_path = "basic_classifier_CTRLfinetune"):
+def run_main(data_augmentation = False, classifier_path = "classifier_50t", output_path = "basic_classifier_CTRLfinetune", lr=5e-5):
     path = "CLEAR Corpus 6.01 - CLEAR Corpus 6.01.csv"
 
     #Using DistilGPT2 - defining tokenizer and model
@@ -141,8 +141,8 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
     tokenizer.pad_token = tokenizer.eos_token
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
-    num_epochs = 10
-    optimizer = AdamW(model.parameters(), correct_bias='True', lr=5e-4)
+    num_epochs = 5
+    optimizer = AdamW(model.parameters(), correct_bias='True', lr=lr)
     lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=len(train_dataset) * num_epochs)
 
     batch_size = 64
@@ -157,7 +157,7 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
         # Create the directory
         os.makedirs(directory)
 
-    best_val_loss = float("inf")
+    best_val_loss = 0
     progress_bar = tqdm(range(num_training_steps))
     num_generated_tokens = 30
 
@@ -265,7 +265,9 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
         print(f"Validation recall: {test_recall}")
         print(f"Validation f1: {test_f1}")
 
-        if test_accuracy < best_val_loss:
+        if test_accuracy > best_val_loss:
+            print("saved!!")
+            print("-------")
             model.save_pretrained(directory)
             tokenizer.save_pretrained(directory)
             best_val_loss = test_accuracy
@@ -311,4 +313,7 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
         print(f"Training f1: {test_f1}")
 
 if __name__ == "__main__":
-    run_main(data_augmentation = False, classifier_path = "classifier_50t", output_path = "basic_classifier_CTRLfinetune")
+    run_main(data_augmentation = True, classifier_path = "classifier_50t", output_path = "basic_classifier_CTRLfinetune_1")
+    run_main(data_augmentation = False, classifier_path = "classifier_50t", output_path = "basic_classifier_CTRLfinetune_2")
+    run_main(data_augmentation = True, classifier_path = "classifier_50t", output_path = "basic_classifier_CTRLfinetune_3")
+    run_main(data_augmentation = False, classifier_path = "classifier_50t", output_path = "basic_classifier_CTRLfinetune_4")

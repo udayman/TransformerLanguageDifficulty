@@ -57,7 +57,7 @@ def compute_metrics(eval_pred):
 
     return result
 
-def run_main(data_augmentation = False, output_path = "classifier_50t"):
+def run_main(data_augmentation = False, output_path = "classifier_50t", lr=5e-5):
     #CSV path
     path = "CLEAR Corpus 6.01 - CLEAR Corpus 6.01.csv"
 
@@ -128,8 +128,8 @@ def run_main(data_augmentation = False, output_path = "classifier_50t"):
 
     quit()
     '''
-    num_epochs = 20
-    optimizer = AdamW(model.parameters(), correct_bias='True', lr=5e-5)
+    num_epochs = 10
+    optimizer = AdamW(model.parameters(), correct_bias='True', lr=lr)
     lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=len(train_dataset) * num_epochs)
 
     batch_size = 64
@@ -262,5 +262,7 @@ def run_main(data_augmentation = False, output_path = "classifier_50t"):
         print(f"Training loss: {test_loss}")
 
 if __name__ == "__main__":
-    run_main(data_augmentation = False, output_path = "classifier_50t")
-    run_main(data_augmentation = True, output_path = "classifier_50t_aug")
+    run_main(data_augmentation = True, output_path = "classifier_50t_aug", lr=5e-5)
+    run_main(data_augmentation = False, output_path = "classifier_50t", lr=5e-5)
+    run_main(data_augmentation = True, output_path = "classifier_50t_f_aug", lr=5e-4)
+    run_main(data_augmentation = False, output_path = "classifier_50t_f", lr=5e-4)
