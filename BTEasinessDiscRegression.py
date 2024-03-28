@@ -262,7 +262,7 @@ def run_main(data_augmentation = False, output_path = "classifier_50t", lr=5e-5)
         print(f"Training loss: {test_loss}")
 
 if __name__ == "__main__":
-    run_main(data_augmentation = True, output_path = "classifier_50t_aug", lr=5e-5)
+    #run_main(data_augmentation = True, output_path = "classifier_50t_aug", lr=5e-5)
     run_main(data_augmentation = False, output_path = "classifier_50t", lr=5e-5)
-    run_main(data_augmentation = True, output_path = "classifier_50t_f_aug", lr=5e-4)
-    run_main(data_augmentation = False, output_path = "classifier_50t_f", lr=5e-4)
+    #run_main(data_augmentation = True, output_path = "classifier_50t_f_aug", lr=5e-4)
+    #run_main(data_augmentation = False, output_path = "classifier_50t_f", lr=5e-4)

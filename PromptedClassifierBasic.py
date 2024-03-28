@@ -151,7 +151,7 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
 
     num_training_steps = int(len(train_dataloader) * num_epochs)
 
-    directory = classifier_path
+    directory = output_path
     if not os.path.exists(directory):
         # Create the directory
         os.makedirs(directory)
@@ -159,6 +159,8 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
     best_val_loss = 0
     progress_bar = tqdm(range(num_training_steps))
     num_generated_tokens = 30
+
+    #classifier.config.pad_token_id = classifier_tokenizer.pad_token_id
 
     print("_______________________New Run!_________________________________________________________________________________")
     model.eval()
@@ -204,7 +206,6 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
     print(f"Validation accuracy: {test_accuracy}")
     print(f"Validation recall: {test_recall}")
     print(f"Validation f1: {test_f1}")
-
     for epoch in range(num_epochs):
         # training
         model.train()
@@ -346,7 +347,7 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
     '''
 
 if __name__ == "__main__":
-    #run_main(data_augmentation = True, classifier_path = "classifier_50t", output_path = "prompt_classifier_CTRLfinetune_1")
-    run_main(data_augmentation = False, classifier_path = "classifier_50t", output_path = "prompt_classifier_CTRLfinetune_2")
-    #run_main(data_augmentation = True, classifier_path = "classifier_50t", output_path = "prompt_classifier_CTRLfinetune_3")
-    run_main(data_augmentation = False, classifier_path = "classifier_50t", output_path = "prompt_classifier_CTRLfinetune_4")
+    run_main(data_augmentation = True, classifier_path = "classifier_50t_aug", output_path = "prompt_classifier_CTRLfinetune_1_f")
+    run_main(data_augmentation = False, classifier_path = "classifier_50t_aug", output_path = "prompt_classifier_CTRLfinetune_2")
+    run_main(data_augmentation = True, classifier_path = "classifier_50t_aug", output_path = "prompt_classifier_CTRLfinetune_3")
+    run_main(data_augmentation = False, classifier_path = "classifier_50t_aug", output_path = "prompt_classifier_CTRLfinetune_4")

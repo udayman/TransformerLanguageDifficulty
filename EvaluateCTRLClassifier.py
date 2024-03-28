@@ -65,8 +65,8 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
 
     #Using DistilGPT2 - defining tokenizer and model
     model_path = 'distilbert/distilgpt2'
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModelForCausalLM.from_pretrained(model_path)
+    tokenizer = AutoTokenizer.from_pretrained(output_path)
+    model = AutoModelForCausalLM.from_pretrained(output_path)
     model.to("cuda")
 
     #load classifier
@@ -152,11 +152,6 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
 
     num_training_steps = int(len(train_dataloader) * num_epochs)
 
-    directory = output_path
-    if not os.path.exists(directory):
-        # Create the directory
-        os.makedirs(directory)
-
     best_val_loss = 0
     progress_bar = tqdm(range(num_training_steps))
     num_generated_tokens = 30
@@ -208,113 +203,6 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
     print(f"Validation recall: {test_recall}")
     print(f"Validation f1: {test_f1}")
 
-    for epoch in range(num_epochs):
-        # training
-        model.train()
-        for batch_i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader)):
-            batch.to("cuda")
-
-            output = model(**batch)
-
-            optimizer.zero_grad()
-            output.loss.backward()
-            optimizer.step()
-            lr_scheduler.step()
-            progress_bar.update(1)
-
-        # validation
-        model.eval()
-        test_mse = 0
-        test_rmse = 0
-        test_mae = 0
-        test_accuracy = 0
-        test_recall = 0
-        test_f1 = 0
-        for batch_i, batch in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader)):
-            with torch.no_grad():
-                batch_inputs = {'input_ids': batch['input_ids'].to("cuda"), 'attention_mask': batch['attention_mask'].to("cuda")}
-                
-                model_outputs = model.generate(**batch_inputs, max_new_tokens=num_generated_tokens, pad_token_id = tokenizer.eos_token_id)
-                output_strings = tokenizer.batch_decode(model_outputs, skip_special_tokens=True)
-                output_strings = [string[3:] for string in output_strings]
-
-                
-                inputs = classifier_tokenizer(output_strings, return_tensors="pt", padding=True)
-                inputs.to("cuda")
-                classifier_outputs = classifier(**inputs).logits
-                classifier_outputs = classifier_outputs.cpu().flatten()
-                labels = batch['labels']
-                
-                test_mse += mean_squared_error(labels, classifier_outputs)
-                test_rmse += root_mean_squared_error(labels, classifier_outputs)
-                test_mae += mean_absolute_error(labels, classifier_outputs)
-
-                target_classes = evaluate_list_quantile_eval(quantiles, labels)
-                classifier_classes = evaluate_list_quantile_eval(quantiles, classifier_outputs)
-                test_accuracy += accuracy_score(target_classes, classifier_classes, normalize = True)
-                test_recall += recall_score(target_classes, classifier_classes, average="macro")
-                test_f1 += f1_score(target_classes, classifier_classes, average="macro")
-
-        test_mse = test_mse / len(eval_dataloader)
-        test_rmse = test_rmse / len(eval_dataloader)
-        test_mae = test_mae / len(eval_dataloader)
-        test_accuracy = test_accuracy / len(eval_dataloader)
-        test_recall = test_recall / len(eval_dataloader)
-        test_f1 = test_f1 / len(eval_dataloader)
-        print(f"Validation mse: {test_mse}")
-        print(f"Validation rmse: {test_rmse}")
-        print(f"Validation mae: {test_mae}")
-        print(f"Validation accuracy: {test_accuracy}")
-        print(f"Validation recall: {test_recall}")
-        print(f"Validation f1: {test_f1}")
-
-        if test_accuracy > best_val_loss:
-            print("saved!!")
-            print("-------")
-            model.save_pretrained(directory)
-            tokenizer.save_pretrained(directory)
-            best_val_loss = test_accuracy
-
-        test_mse = 0
-        test_rmse = 0
-        test_mae = 0
-        test_accuracy = 0
-        test_recall = 0
-        test_f1 = 0
-        for batch_i, batch in tqdm(enumerate(train_eval_dataloader), total=len(train_eval_dataloader)):
-            with torch.no_grad():
-                batch_inputs = {'input_ids': batch['input_ids'].to("cuda"), 'attention_mask': batch['attention_mask'].to("cuda")}
-                
-                model_outputs = model.generate(**batch_inputs, max_new_tokens=num_generated_tokens, pad_token_id = tokenizer.eos_token_id)
-                output_strings = tokenizer.batch_decode(model_outputs, skip_special_tokens=True)
-                output_strings = [string[3:] for string in output_strings]
-                
-                inputs = classifier_tokenizer(output_strings, return_tensors="pt", padding=True)
-                inputs.to("cuda")
-                classifier_outputs = classifier(**inputs).logits
-                classifier_outputs = classifier_outputs.cpu().flatten()
-                labels = batch['labels']
-                
-                test_mse += mean_squared_error(labels, classifier_outputs)
-                test_rmse += root_mean_squared_error(labels, classifier_outputs)
-                test_mae += mean_absolute_error(labels, classifier_outputs)
-                test_accuracy += accuracy_score(target_classes, classifier_classes, normalize = True)
-                test_recall += recall_score(target_classes, classifier_classes, average="macro")
-                test_f1 += f1_score(target_classes, classifier_classes, average="macro")
-
-        test_mse = test_mse / len(train_eval_dataloader)
-        test_rmse = test_rmse / len(train_eval_dataloader)
-        test_mae = test_mae / len(train_eval_dataloader)
-        test_accuracy = test_accuracy / len(train_eval_dataloader)
-        test_recall = test_recall / len(train_eval_dataloader)
-        test_f1 = test_f1 / len(train_eval_dataloader)
-        print(f"Training mse: {test_mse}")
-        print(f"Training rmse: {test_rmse}")
-        print(f"Training mae: {test_mae}")
-        print(f"Training accuracy: {test_accuracy}")
-        print(f"Training recall: {test_recall}")
-        print(f"Training f1: {test_f1}")
-
 if __name__ == "__main__":
-    run_main(data_augmentation = True, classifier_path = "classifier_50t_aug", output_path = "basic_classifier_CTRLfinetune_1")
-    run_main(data_augmentation = False, classifier_path = "classifier_50t_aug", output_path = "basic_classifier_CTRLfinetune_2")
+    run_main(data_augmentation = False, classifier_path = "classifier_50t_aug", output_path = "basic_classifier_CTRLfinetune_1")
+    #run_main(data_augmentation = False, classifier_path = "classifier_50t_aug", output_path = "basic_classifier_CTRLfinetune_2")

@@ -98,14 +98,14 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
         prefix = "This is written by a  " + return_difficulty(evaluate_single_quantile(quantiles, item_target)) + ": "
 
         if data_augmentation == False:
-            training_data.append({"source": " ".join(item_source_split[:20]), "target": item_target})
+            training_data.append({"source": " ".join(item_source_split[:10]), "target": item_target, "prefix_length": len(prefix)})
         else:
             num_source_item = len(item_source_split)
-            for i in range(0, num_source_item, 20):
-                cur_element_source = " ".join(item_source_split[i:i+20])
+            for i in range(0, num_source_item, 50):
+                cur_element_source = " ".join(item_source_split[i:i+10])
                 training_data.append({"source": prefix + cur_element_source, "target": item_target, "prefix_length": len(prefix)})
 
-    training_data = [{"source": data["source"], "target": get_value_quantile_train(quantiles, evaluate_single_quantile(quantiles, data["target"])), "prefix_length":len(prefix)} for data in training_data]
+    training_data = [{"source": data["source"], "target": get_value_quantile_train(quantiles, evaluate_single_quantile(quantiles, data["target"])), "prefix_length":data["prefix_length"]} for data in training_data]
 
     for item in ptest_data:
         item_source = item["source"]
@@ -135,9 +135,9 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
         cur_element_source = prefix + cur_element_source
         training_eval.append({"source": cur_element_source, "target": get_value_quantile_train(quantiles, evaluate_single_quantile(quantiles, item_target)), "prefix_length":len(prefix)})
 
-    train_dataset = CausalDataset(training_data[:64], tokenizer)
-    test_dataset = EvaluationDataset(test_data[:64], tokenizer)
-    training_evalset = EvaluationDataset(training_eval[:64], tokenizer)
+    train_dataset = CausalDataset(training_data, tokenizer)
+    test_dataset = EvaluationDataset(test_data, tokenizer)
+    training_evalset = EvaluationDataset(training_eval, tokenizer)
 
     #collating model for language modeling
     tokenizer.padding_side = 'left'
@@ -145,7 +145,7 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
     tokenizer.pad_token = tokenizer.eos_token
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
-    num_epochs = 20
+    num_epochs = 1
     optimizer = AdamW(model.parameters(), correct_bias='True', lr=5e-4)
     optimizer_default = AdamW(model.parameters(), correct_bias='True', lr=5e-4)
     lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=len(train_dataset) * num_epochs)
@@ -163,10 +163,10 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
         # Create the directory
         os.makedirs(directory)
 
-    best_val_loss = float("inf")
+    best_val_loss = 0
     progress_bar = tqdm(range(num_training_steps))
     num_generated_tokens = 30
-    top_k = 20
+    top_k = 10
 
     model.eval()
     test_mse = 0
@@ -176,13 +176,13 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
     test_recall = 0
     test_f1 = 0
 
-    classifier.config.pad_token_id = classifier.config.eos_token_id
     for batch_i, batch in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader)):
         with torch.no_grad():
             batch_inputs = {'input_ids': batch['input_ids'].to("cuda"), 'attention_mask': batch['attention_mask'].to("cuda")}
             
             model_outputs = model.generate(**batch_inputs, max_new_tokens=num_generated_tokens, pad_token_id = tokenizer.eos_token_id)
             output_strings = tokenizer.batch_decode(model_outputs, skip_special_tokens=True)
+            output_strings = [output_strings[i][batch['prefix_length'][i]:] for i in range(len(output_strings))]
             
             inputs = classifier_tokenizer(output_strings, return_tensors="pt", padding=True)
             inputs.to("cuda")
@@ -231,6 +231,7 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
         for batch_i, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader)):
             batch_inputs = {'input_ids': batch['input_ids'].to("cuda"), 'attention_mask': batch['attention_mask'].to("cuda")}
             output_strings = [training_data[i]['source'] for i in batch['indices']]
+            output_strings = [output_strings[i][batch['prefix_length'][i]:] for i in range(len(output_strings))]
             len_output_strings = len(output_strings)
 
             output = model(**batch_inputs)
@@ -315,7 +316,8 @@ def run_main(data_augmentation = False, classifier_path = "classifier_50t", outp
         print(f"Validation recall: {test_recall}")
         print(f"Validation f1: {test_f1}")
 
-        if test_accuracy < best_val_loss:
+        if test_accuracy > best_val_loss:
+            print("Saved!")
             model.save_pretrained(directory)
             tokenizer.save_pretrained(directory)
             best_val_loss = test_accuracy
@@ -395,4 +397,5 @@ trainer.train()
 '''
 
 if __name__ == "__main__":
-    run_main(data_augmentation = False, classifier_path = "classifier_50t", output_path = "guided_CTRLfinetune_prompt_loss")
+    run_main(data_augmentation = False, classifier_path = "classifier_50t_aug", output_path = "guided_CTRLfinetune_prompt_loss_1")
+    run_main(data_augmentation = True, classifier_path = "classifier_50t_aug", output_path = "guided_CTRLfinetune_promp_loss_2")
